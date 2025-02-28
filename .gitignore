@@ -178,4 +178,4 @@ terraform/terraform.tfstate.backup
 *LICENSE.txt
 terraform/.terraform.tfstate.lock.info
 *.terraform
-*.package
+/packages
