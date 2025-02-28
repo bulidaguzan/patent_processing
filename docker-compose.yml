@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  localstack:
+    container_name: localstack
+    image: localstack/localstack:3.3.0
+    ports:
+      - "4566:4566"
+    environment:
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - SERVICES=lambda,apigateway,cloudwatch,s3,iam,logs
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_REGION=us-east-1
+      - LAMBDA_EXECUTOR=local
+      - LAMBDA_REMOTE_DOCKER=false
+      - HOSTNAME_EXTERNAL=localstack
+      - SKIP_DIRECTORY_CLEANUP=1
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./lambda:/opt/lambda"
+    networks:
+      - local-aws-network
+
+  postgres:
+    container_name: postgres
+    image: postgres:14
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=licenseplate_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - local-aws-network
+
+  terraform:
+    container_name: terraform
+    image: hashicorp/terraform:latest
+    volumes:
+      - ./terraform:/terraform
+      - ./lambda:/lambda
+    working_dir: /terraform
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - TF_CLI_ARGS=-no-color
+    depends_on:
+      - localstack
+      - postgres
+    networks:
+      - local-aws-network
+    entrypoint: ["sh", "-c", "sleep 30 && terraform init && terraform apply -auto-approve"]
+
+networks:
+  local-aws-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
