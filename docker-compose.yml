@@ -17,6 +17,8 @@ services:
       - LAMBDA_REMOTE_DOCKER=false
       - HOSTNAME_EXTERNAL=localstack
       - SKIP_DIRECTORY_CLEANUP=1
+      - GATEWAY_LISTEN=0.0.0.0:4566
+      - GATEWAY_FORWARD=
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "./lambda:/opt/lambda"
@@ -53,9 +55,26 @@ services:
     depends_on:
       - localstack
       - postgres
+      - lambda-deps
     networks:
       - local-aws-network
     entrypoint: ["sh", "-c", "sleep 30 && terraform init && terraform apply -auto-approve"]
+
+  lambda-deps:
+    container_name: lambda-deps
+    image: python:3.9
+    volumes:
+      - ./lambda:/lambda
+    working_dir: /lambda
+    command: >
+      bash -c "
+        # Instalar dependencias para process_readings
+        cd /lambda/process_readings &&
+        pip install -r requirements.txt -t . &&
+        
+        # Instalar dependencias para query_metrics
+        cd /lambda/query_metrics &&
+        pip install -r requirements.txt -t ."
 
 networks:
   local-aws-network:
