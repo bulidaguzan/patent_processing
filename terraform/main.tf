@@ -13,19 +13,8 @@ provider "aws" {
     iam            = "http://localstack:4566"
     logs           = "http://localstack:4566"
     s3             = "http://localstack:4566"
+    route53        = "http://localstack:4566"
   }
-}
-
-data "archive_file" "process_readings_lambda" {
-  type        = "zip"
-  source_dir  = "/lambda/process_readings"
-  output_path = "/terraform/process_readings.zip"
-}
-
-data "archive_file" "query_metrics_lambda" {
-  type        = "zip"
-  source_dir  = "/lambda/query_metrics"
-  output_path = "/terraform/query_metrics.zip"
 }
 
 resource "aws_iam_role" "lambda_role" {
@@ -67,13 +56,12 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
 }
 
 resource "aws_lambda_function" "process_readings" {
-  function_name    = "process-license-plate-readings"
-  filename         = data.archive_file.process_readings_lambda.output_path
-  runtime          = "python3.9"
-  handler          = "app.lambda_handler"
-  source_code_hash = data.archive_file.process_readings_lambda.output_base64sha256
-  role             = aws_iam_role.lambda_role.arn
-  timeout          = 30
+  function_name = "process-license-plate-readings"
+  filename      = "/packages/process_readings.zip"
+  runtime       = "python3.9"
+  handler       = "app.lambda_handler"
+  role          = aws_iam_role.lambda_role.arn
+  timeout       = 30
 
   environment {
     variables = {
@@ -91,13 +79,12 @@ resource "aws_lambda_function" "process_readings" {
 }
 
 resource "aws_lambda_function" "query_metrics" {
-  function_name    = "query-license-plate-metrics"
-  filename         = data.archive_file.query_metrics_lambda.output_path
-  runtime          = "python3.9"
-  handler          = "app.lambda_handler"
-  source_code_hash = data.archive_file.query_metrics_lambda.output_base64sha256
-  role             = aws_iam_role.lambda_role.arn
-  timeout          = 30
+  function_name = "query-license-plate-metrics"
+  filename      = "/packages/query_metrics.zip"
+  runtime       = "python3.9"
+  handler       = "app.lambda_handler"
+  role          = aws_iam_role.lambda_role.arn
+  timeout       = 30
 
   environment {
     variables = {
@@ -124,80 +111,74 @@ resource "aws_cloudwatch_log_group" "query_metrics_logs" {
   retention_in_days = 14
 }
 
-# Crear un bucket S3 para alojar la definición de API Gateway OpenAPI
-resource "aws_s3_bucket" "openapi_bucket" {
-  bucket = "openapi-definition-bucket"
-  force_destroy = true
-}
-
-# Crear un documento OpenAPI para definir la API
-resource "aws_s3_bucket_object" "openapi_definition" {
-  bucket = aws_s3_bucket.openapi_bucket.bucket
-  key    = "openapi.json"
-  content = jsonencode({
-    openapi = "3.0.1"
-    info = {
-      title   = "LicensePlateAPI"
-      version = "1.0"
-    }
-    paths = {
-      "/readings" = {
-        post = {
-          "x-amazon-apigateway-integration" = {
-            uri          = aws_lambda_function.process_readings.invoke_arn
-            type         = "aws_proxy"
-            httpMethod   = "POST"
-            payloadFormatVersion = "1.0"
-          }
-        }
-      }
-      "/metrics" = {
-        get = {
-          "x-amazon-apigateway-integration" = {
-            uri          = aws_lambda_function.query_metrics.invoke_arn
-            type         = "aws_proxy"
-            httpMethod   = "POST"
-            payloadFormatVersion = "1.0"
-          }
-        }
-      }
-    }
-  })
-  content_type = "application/json"
-}
-
-# Crear la API Gateway usando la definición OpenAPI
+# API Gateway - Simplified approach without custom domain
 resource "aws_api_gateway_rest_api" "license_plate_api" {
   name        = "LicensePlateAPI"
   description = "License Plate Readings API"
-  body        = aws_s3_bucket_object.openapi_definition.content
-
-  endpoint_configuration {
-    types = ["REGIONAL"]
-  }
 }
 
-# Desplegar la API Gateway
-resource "aws_api_gateway_deployment" "api_deployment" {
+# Create a resource for /readings endpoint
+resource "aws_api_gateway_resource" "readings_resource" {
   rest_api_id = aws_api_gateway_rest_api.license_plate_api.id
-  
-  triggers = {
-    redeployment = sha256(aws_s3_bucket_object.openapi_definition.content)
-  }
-
-  lifecycle {
-    create_before_destroy = true
-  }
+  parent_id   = aws_api_gateway_rest_api.license_plate_api.root_resource_id
+  path_part   = "readings"
 }
 
-# Crear una etapa "dev" para la API Gateway
-resource "aws_api_gateway_stage" "dev" {
-  deployment_id = aws_api_gateway_deployment.api_deployment.id
+# Create a resource for /metrics endpoint
+resource "aws_api_gateway_resource" "metrics_resource" {
+  rest_api_id = aws_api_gateway_rest_api.license_plate_api.id
+  parent_id   = aws_api_gateway_rest_api.license_plate_api.root_resource_id
+  path_part   = "metrics"
+}
+
+# POST method for /readings
+resource "aws_api_gateway_method" "readings_post" {
   rest_api_id   = aws_api_gateway_rest_api.license_plate_api.id
-  stage_name    = "dev"
+  resource_id   = aws_api_gateway_resource.readings_resource.id
+  http_method   = "POST"
+  authorization = "NONE"
 }
 
-# Configurar permisos Lambda para permitir invocaciones desde API Gateway
+# Integration for POST /readings
+resource "aws_api_gateway_integration" "readings_post_integration" {
+  rest_api_id             = aws_api_gateway_rest_api.license_plate_api.id
+  resource_id             = aws_api_gateway_resource.readings_resource.id
+  http_method             = aws_api_gateway_method.readings_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.process_readings.invoke_arn
+}
+
+# GET method for /metrics
+resource "aws_api_gateway_method" "metrics_get" {
+  rest_api_id   = aws_api_gateway_rest_api.license_plate_api.id
+  resource_id   = aws_api_gateway_resource.metrics_resource.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
+
+# Integration for GET /metrics
+resource "aws_api_gateway_integration" "metrics_get_integration" {
+  rest_api_id             = aws_api_gateway_rest_api.license_plate_api.id
+  resource_id             = aws_api_gateway_resource.metrics_resource.id
+  http_method             = aws_api_gateway_method.metrics_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.query_metrics.invoke_arn
+}
+
+# Deploy the API
+resource "aws_api_gateway_deployment" "api_deployment" {
+  depends_on = [
+    aws_api_gateway_integration.readings_post_integration,
+    aws_api_gateway_integration.metrics_get_integration
+  ]
+
+  rest_api_id = aws_api_gateway_rest_api.license_plate_api.id
+  stage_name  = "dev"
+}
+
+# Permissions for Lambda functions
 resource "aws_lambda_permission" "apigw_process_readings" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
@@ -214,50 +195,33 @@ resource "aws_lambda_permission" "apigw_query_metrics" {
   source_arn    = "${aws_api_gateway_rest_api.license_plate_api.execution_arn}/*/*"
 }
 
-# Configurar un dominio personalizado para la API Gateway con una URL fija
-resource "aws_api_gateway_domain_name" "fixed_api_domain" {
-  domain_name = "api.localstack.cloud"
-  regional_certificate_arn = "arn:aws:acm:us-east-1:000000000000:certificate/12345678-1234-1234-1234-123456789012"
-  
-  endpoint_configuration {
-    types = ["REGIONAL"]
-  }
+output "api_url" {
+  description = "Base URL for API Gateway"
+  value       = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_"
 }
 
-# Mapear la etapa de la API al dominio personalizado
-resource "aws_api_gateway_base_path_mapping" "api_mapping" {
-  api_id      = aws_api_gateway_rest_api.license_plate_api.id
-  stage_name  = aws_api_gateway_stage.dev.stage_name
-  domain_name = aws_api_gateway_domain_name.fixed_api_domain.domain_name
+output "readings_endpoint" {
+  description = "URL for the process_readings endpoint"
+  value       = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_/readings"
 }
 
-# Script de ayuda para imprimir las URLs de los endpoints
+output "metrics_endpoint" {
+  description = "URL for the query_metrics endpoint"
+  value       = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_/metrics"
+}
+
 resource "null_resource" "print_endpoints" {
   provisioner "local-exec" {
     command = <<-EOT
       echo "===== API ENDPOINTS ====="
-      echo "Reading endpoint: http://localhost:4566/dev/readings"
-      echo "Metrics endpoint: http://localhost:4566/dev/metrics"
+      echo "API Gateway ID: ${aws_api_gateway_rest_api.license_plate_api.id}"
+      echo "Reading endpoint: http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_/readings"
+      echo "Metrics endpoint: http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_/metrics"
       echo "========================="
     EOT
   }
   
   depends_on = [
-    aws_api_gateway_stage.dev
+    aws_api_gateway_deployment.api_deployment
   ]
-}
-
-output "api_url" {
-  description = "Base URL for API Gateway"
-  value       = "http://localhost:4566/dev"
-}
-
-output "readings_endpoint" {
-  description = "URL for the process_readings endpoint"
-  value       = "http://localhost:4566/dev/readings"
-}
-
-output "metrics_endpoint" {
-  description = "URL for the query_metrics endpoint"
-  value       = "http://localhost:4566/dev/metrics"
 }

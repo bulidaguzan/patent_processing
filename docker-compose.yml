@@ -9,7 +9,7 @@ services:
     environment:
       - DEBUG=1
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - SERVICES=lambda,apigateway,cloudwatch,s3,iam,logs
+      - SERVICES=lambda,apigateway,cloudwatch,s3,iam,logs,route53
       - DEFAULT_REGION=us-east-1
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_REGION=us-east-1
@@ -40,12 +40,60 @@ services:
     networks:
       - local-aws-network
 
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4:latest
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - local-aws-network
+
+  lambda-deps:
+    container_name: lambda-deps
+    image: python:3.9
+    volumes:
+      - ./lambda:/lambda
+      - ./packages:/packages
+    working_dir: /lambda
+    command: >
+      bash -c "
+        # Instalar herramienta zip
+        apt-get update && apt-get install -y zip &&
+        
+        # Preparamos los directorios para las funciones Lambda
+        mkdir -p /packages/process_readings /packages/query_metrics &&
+        
+        # Copiamos el código fuente a los directorios de paquetes
+        cp /lambda/process_readings/app.py /packages/process_readings/ &&
+        cp /lambda/query_metrics/app.py /packages/query_metrics/ &&
+        
+        # Instalamos las dependencias para process_readings
+        cd /packages/process_readings &&
+        pip install -r /lambda/process_readings/requirements.txt -t . &&
+        
+        # Instalamos las dependencias para query_metrics
+        cd /packages/query_metrics &&
+        pip install -r /lambda/query_metrics/requirements.txt -t . &&
+        
+        # Creamos los archivos ZIP para las funciones Lambda
+        cd /packages/process_readings && zip -r /packages/process_readings.zip . &&
+        cd /packages/query_metrics && zip -r /packages/query_metrics.zip ."
+
   terraform:
     container_name: terraform
     image: hashicorp/terraform:latest
     volumes:
       - ./terraform:/terraform
       - ./lambda:/lambda
+      - ./packages:/packages
     working_dir: /terraform
     environment:
       - AWS_ACCESS_KEY_ID=test
@@ -58,23 +106,7 @@ services:
       - lambda-deps
     networks:
       - local-aws-network
-    entrypoint: ["sh", "-c", "sleep 30 && terraform init && terraform apply -auto-approve"]
-
-  lambda-deps:
-    container_name: lambda-deps
-    image: python:3.9
-    volumes:
-      - ./lambda:/lambda
-    working_dir: /lambda
-    command: >
-      bash -c "
-        # Instalar dependencias para process_readings
-        cd /lambda/process_readings &&
-        pip install -r requirements.txt -t . &&
-        
-        # Instalar dependencias para query_metrics
-        cd /lambda/query_metrics &&
-        pip install -r requirements.txt -t ."
+    entrypoint: ["sh", "-c", "sleep 10 && terraform init && terraform apply -auto-approve"]
 
 networks:
   local-aws-network:
@@ -82,3 +114,4 @@ networks:
 
 volumes:
   postgres-data:
+  pgadmin-data:
