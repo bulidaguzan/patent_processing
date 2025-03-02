@@ -5,18 +5,23 @@ import logging
 import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
-# Configure logging
+# Configure logging to CloudWatch
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Database connection parameters
+# Database connection parameters from environment variables with defaults
 DB_HOST = os.environ.get("DB_HOST", "postgres")
 DB_NAME = os.environ.get("DB_NAME", "licenseplate_db")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 
-# Hard-coded campaign data (in a real scenario this would come from a DB)
+# Hard-coded campaign data (in a production environment, these would be stored in a database)
+# Each campaign defines:
+# - Eligible checkpoints (locations)
+# - Time window when the ad should be displayed
+# - Maximum exposures per license plate
+# - The ad content to show
 CAMPAIGNS = [
     {
         "campaign_id": "CAMP_001",
@@ -36,19 +41,27 @@ CAMPAIGNS = [
 
 
 class DatabaseError(Exception):
-    """Exception for database-related errors"""
+    """Custom exception for database-related errors"""
 
     pass
 
 
 class ValidationError(Exception):
-    """Exception for data validation errors"""
+    """Custom exception for data validation errors"""
 
     pass
 
 
 def get_db_connection():
-    """Establish a database connection"""
+    """
+    Establish a connection to the PostgreSQL database
+
+    Returns:
+        psycopg2.connection: Database connection object
+
+    Raises:
+        DatabaseError: If connection to the database fails
+    """
     try:
         conn = psycopg2.connect(
             host=DB_HOST,
@@ -68,10 +81,15 @@ def get_db_connection():
 
 def validate_reading(reading: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     """
-    Validate the format of the license plate reading
+    Validate the format and content of a license plate reading
+
+    Args:
+        reading: Dictionary containing the license plate reading data
 
     Returns:
-        Tuple of (is_valid, error_message)
+        Tuple containing:
+        - Boolean indicating if the reading is valid
+        - Error message string if invalid, None if valid
     """
     required_fields = [
         "reading_id",
@@ -128,7 +146,7 @@ def validate_reading(reading: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
             "Invalid location coordinates: latitude and longitude must be numbers",
         )
 
-    # Validate timestamp format
+    # Validate timestamp format (ISO 8601)
     try:
         datetime.datetime.fromisoformat(reading["timestamp"].replace("Z", "+00:00"))
         return True, None
@@ -140,7 +158,17 @@ def validate_reading(reading: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
 
 
 def save_reading(conn, reading: Dict[str, Any]) -> None:
-    """Save license plate reading to database"""
+    """
+    Save the license plate reading to the database
+
+    Args:
+        conn: Database connection
+        reading: Dictionary containing the license plate reading data
+
+    Raises:
+        ValidationError: If the reading_id already exists (duplicate)
+        DatabaseError: If there's an error saving to the database
+    """
     query = """
     INSERT INTO license_plate_readings 
     (reading_id, timestamp, license_plate, checkpoint_id, latitude, longitude)
@@ -174,7 +202,20 @@ def save_reading(conn, reading: Dict[str, Any]) -> None:
 
 
 def get_exposure_count(conn, license_plate: str, campaign_id: str) -> int:
-    """Get the number of times a license plate has been exposed to a campaign"""
+    """
+    Get the number of times a license plate has been exposed to a specific campaign
+
+    Args:
+        conn: Database connection
+        license_plate: The license plate to check
+        campaign_id: The campaign ID to check
+
+    Returns:
+        int: The number of exposures
+
+    Raises:
+        DatabaseError: If there's an error querying the database
+    """
     query = """
     SELECT COUNT(*) FROM ad_exposures ae
     JOIN license_plate_readings lpr ON ae.reading_id = lpr.reading_id
@@ -194,7 +235,20 @@ def get_exposure_count(conn, license_plate: str, campaign_id: str) -> int:
 def save_exposure(
     conn, reading_id: str, campaign_id: str, ad_content: str, timestamp: str
 ) -> None:
-    """Save ad exposure to database"""
+    """
+    Save an ad exposure record to the database
+
+    Args:
+        conn: Database connection
+        reading_id: The ID of the license plate reading
+        campaign_id: The ID of the campaign
+        ad_content: The content identifier for the ad
+        timestamp: When the exposure occurred
+
+    Raises:
+        ValidationError: If the reading_id doesn't exist
+        DatabaseError: If there's an error saving to the database
+    """
     query = """
     INSERT INTO ad_exposures
     (reading_id, campaign_id, ad_content, exposure_timestamp)
@@ -219,7 +273,17 @@ def save_exposure(
 def is_in_time_window(
     reading_time: datetime.datetime, start_time_str: str, end_time_str: str
 ) -> bool:
-    """Check if reading time is within campaign time window"""
+    """
+    Check if a reading time is within a campaign's time window
+
+    Args:
+        reading_time: The datetime of the reading
+        start_time_str: Start time string in "HH:MM" format
+        end_time_str: End time string in "HH:MM" format
+
+    Returns:
+        bool: True if the reading time is within the time window, False otherwise
+    """
     try:
         start_hour, start_minute = map(int, start_time_str.split(":"))
         end_hour, end_minute = map(int, end_time_str.split(":"))
@@ -227,6 +291,7 @@ def is_in_time_window(
         reading_hour = reading_time.hour
         reading_minute = reading_time.minute
 
+        # Convert everything to minutes for easier comparison
         start_minutes = start_hour * 60 + start_minute
         end_minutes = end_hour * 60 + end_minute
         reading_minutes = reading_hour * 60 + reading_minute
@@ -241,7 +306,21 @@ def is_in_time_window(
 def determine_applicable_campaign(
     conn, reading: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
-    """Determine which campaign is applicable for the license plate reading"""
+    """
+    Determine which campaign is applicable for the license plate reading
+
+    A campaign is applicable if:
+    1. The checkpoint is in the campaign's locations
+    2. The reading time is within the campaign's time window
+    3. The license plate hasn't exceeded the max exposures for the campaign
+
+    Args:
+        conn: Database connection
+        reading: Dictionary containing the license plate reading data
+
+    Returns:
+        Optional[Dict]: The applicable campaign if found, None otherwise
+    """
     try:
         reading_time = datetime.datetime.fromisoformat(
             reading["timestamp"].replace("Z", "+00:00")
@@ -273,7 +352,16 @@ def determine_applicable_campaign(
 
 
 def api_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper function to format API Gateway response"""
+    """
+    Helper function to format API Gateway response
+
+    Args:
+        status_code: HTTP status code
+        body: Response body content
+
+    Returns:
+        Dict: Formatted API Gateway response
+    """
     return {
         "statusCode": status_code,
         "headers": {
@@ -287,7 +375,18 @@ def api_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def lambda_handler(event, context):
-    """AWS Lambda Handler"""
+    """
+    AWS Lambda Handler - main entry point for the function
+
+    Processes license plate readings and determines applicable advertisements
+
+    Args:
+        event: Lambda event data from API Gateway
+        context: Lambda runtime context
+
+    Returns:
+        Dict: API Gateway response
+    """
     conn = None  # Initialize connection to None
 
     try:

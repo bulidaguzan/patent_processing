@@ -4,35 +4,43 @@ import psycopg2
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 
-# Configure logging
+# Configure logging to CloudWatch
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Database connection parameters
+# Database connection parameters from environment variables with defaults
 DB_HOST = os.environ.get("DB_HOST", "postgres")
 DB_NAME = os.environ.get("DB_NAME", "licenseplate_db")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
 DB_PORT = os.environ.get("DB_PORT", "5432")
 
-# Maximum limit for querying exposures to prevent overloading
+# Maximum limit for querying exposures to prevent overloading the database
 MAX_ALLOWED_LIMIT = 100
 
 
 class DatabaseError(Exception):
-    """Exception for database-related errors"""
+    """Custom exception for database-related errors"""
 
     pass
 
 
 class ValidationError(Exception):
-    """Exception for data validation errors"""
+    """Custom exception for data validation errors"""
 
     pass
 
 
 def get_db_connection():
-    """Establish a database connection"""
+    """
+    Establish a connection to the PostgreSQL database
+
+    Returns:
+        psycopg2.connection: Database connection object
+
+    Raises:
+        DatabaseError: If connection to the database fails
+    """
     try:
         conn = psycopg2.connect(
             host=DB_HOST,
@@ -54,10 +62,15 @@ def validate_query_parameters(
     params: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """
-    Validate query parameters
+    Validate and process query parameters
+
+    Args:
+        params: Dictionary of query parameters from API Gateway
 
     Returns:
-        Tuple of (validated_params, error_message)
+        Tuple containing:
+        - Dictionary of validated parameters
+        - Error message string if invalid, None if valid
     """
     validated_params = {}
 
@@ -86,7 +99,19 @@ def validate_query_parameters(
 
 
 def get_readings_by_checkpoint(conn) -> List[Dict[str, Any]]:
-    """Get total readings count by checkpoint"""
+    """
+    Get total readings count by checkpoint
+    This function aggregates all license plate readings by checkpoint location
+
+    Args:
+        conn: Database connection
+
+    Returns:
+        List[Dict]: List of dictionaries with checkpoint_id and total_readings
+
+    Raises:
+        DatabaseError: If there's an error querying the database
+    """
     query = """
     SELECT checkpoint_id, COUNT(*) as total_readings
     FROM license_plate_readings
@@ -108,7 +133,19 @@ def get_readings_by_checkpoint(conn) -> List[Dict[str, Any]]:
 
 
 def get_ads_by_campaign(conn) -> List[Dict[str, Any]]:
-    """Get total ads shown by campaign"""
+    """
+    Get total ads shown by campaign
+    This function counts how many times each ad campaign has been shown
+
+    Args:
+        conn: Database connection
+
+    Returns:
+        List[Dict]: List of dictionaries with campaign_id and total_ads_shown
+
+    Raises:
+        DatabaseError: If there's an error querying the database
+    """
     query = """
     SELECT campaign_id, COUNT(*) as total_ads_shown
     FROM ad_exposures
@@ -130,7 +167,20 @@ def get_ads_by_campaign(conn) -> List[Dict[str, Any]]:
 
 
 def get_recent_exposures(conn, limit: int = 10) -> List[Dict[str, Any]]:
-    """Get recent ad exposures with reading details"""
+    """
+    Get recent ad exposures with reading details
+    This function retrieves the most recent ad exposures with detailed information
+
+    Args:
+        conn: Database connection
+        limit: Maximum number of exposures to return (default: 10)
+
+    Returns:
+        List[Dict]: List of dictionaries containing exposure details
+
+    Raises:
+        DatabaseError: If there's an error querying the database
+    """
     query = """
     SELECT 
         ae.id,
@@ -169,7 +219,16 @@ def get_recent_exposures(conn, limit: int = 10) -> List[Dict[str, Any]]:
 
 
 def api_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper function to format API Gateway response"""
+    """
+    Helper function to format API Gateway response
+
+    Args:
+        status_code: HTTP status code
+        body: Response body content
+
+    Returns:
+        Dict: Formatted API Gateway response with proper headers and serialized body
+    """
     return {
         "statusCode": status_code,
         "headers": {
@@ -183,13 +242,27 @@ def api_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def lambda_handler(event, context):
-    """AWS Lambda Handler"""
+    """
+    AWS Lambda Handler - main entry point for the function
+
+    Provides metrics about license plate readings and ad exposures:
+    1. Total readings by checkpoint
+    2. Total ads shown by campaign
+    3. Recent ad exposures with details
+
+    Args:
+        event: Lambda event data from API Gateway
+        context: Lambda runtime context
+
+    Returns:
+        Dict: API Gateway response containing the metrics data
+    """
     conn = None  # Initialize connection to None
 
     try:
         logger.info(f"Received event: {json.dumps(event)}")
 
-        # Parse query parameters
+        # Parse query parameters from API Gateway event
         query_params = event.get("queryStringParameters", {}) or {}
 
         # Validate query parameters
@@ -202,12 +275,12 @@ def lambda_handler(event, context):
         # Connect to database
         conn = get_db_connection()
 
-        # Get metrics
+        # Get metrics data from database
         readings_by_checkpoint = get_readings_by_checkpoint(conn)
         ads_by_campaign = get_ads_by_campaign(conn)
         recent_exposures = get_recent_exposures(conn, limit)
 
-        # Return metrics
+        # Return metrics data in response
         return api_response(
             200,
             {
