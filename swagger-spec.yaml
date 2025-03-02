@@ -1,0 +1,322 @@
+openapi: 3.0.0
+info:
+  title: License Plate Processing API
+  description: API for processing license plate readings and querying metrics
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:4566/restapis/{apiId}/dev/_user_request_
+    description: LocalStack API Gateway
+    variables:
+      apiId:
+        description: The API Gateway ID (run 'Get API ID' script first)
+        default: YOUR_API_ID_HERE
+
+tags:
+  - name: Readings
+    description: API endpoints for processing license plate readings
+  - name: Metrics
+    description: API endpoints for querying metrics
+
+paths:
+  /readings:
+    post:
+      tags:
+        - Readings
+      summary: Process a license plate reading
+      description: Submit a license plate reading to be processed according to campaign rules
+      operationId: processReading
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicensePlateReading"
+      responses:
+        "200":
+          description: Successfully processed reading
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Conflict - Duplicate reading ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X POST \
+            http://localhost:4566/restapis/$API_ID/dev/_user_request_/readings \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "reading_id": "READ123",
+              "timestamp": "2023-06-10T14:30:00Z",
+              "license_plate": "ABC123",
+              "checkpoint_id": "CHECK_01",
+              "location": {
+                "latitude": 37.7749,
+                "longitude": -122.4194
+              }
+            }'
+
+  /metrics:
+    get:
+      tags:
+        - Metrics
+      summary: Query metrics about readings and ad exposures
+      description: Get statistics about license plate readings and ad exposures
+      operationId: getMetrics
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of recent exposures to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        "200":
+          description: Successfully retrieved metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Metrics"
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      x-code-samples:
+        - lang: curl
+          source: |
+            curl -X GET \
+            "http://localhost:4566/restapis/$API_ID/dev/_user_request_/metrics?limit=5"
+
+components:
+  schemas:
+    Location:
+      type: object
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Geographic latitude
+          example: 37.7749
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Geographic longitude
+          example: -122.4194
+
+    LicensePlateReading:
+      type: object
+      required:
+        - reading_id
+        - timestamp
+        - license_plate
+        - checkpoint_id
+        - location
+      properties:
+        reading_id:
+          type: string
+          description: Unique identifier for the reading
+          example: READ123
+        timestamp:
+          type: string
+          format: date-time
+          description: Time when the reading occurred (ISO 8601 format)
+          example: 2023-06-10T14:30:00Z
+        license_plate:
+          type: string
+          description: License plate number
+          example: ABC123
+        checkpoint_id:
+          type: string
+          description: Identifier for the checkpoint
+          example: CHECK_01
+        location:
+          $ref: "#/components/schemas/Location"
+
+    AdServed:
+      type: object
+      required:
+        - campaign_id
+        - ad_content
+      properties:
+        campaign_id:
+          type: string
+          description: Identifier for the campaign
+          example: CAMP_001
+        ad_content:
+          type: string
+          description: Identifier for the ad content
+          example: AD_001
+
+    ProcessingResult:
+      type: object
+      required:
+        - reading_id
+        - processed
+      properties:
+        reading_id:
+          type: string
+          description: Identifier for the processed reading
+          example: READ123
+        processed:
+          type: boolean
+          description: Whether the reading was successfully processed
+          example: true
+        ad_served:
+          type: object
+          nullable: true
+          description: Information about the ad served (null if no ad was applicable)
+          allOf:
+            - $ref: "#/components/schemas/AdServed"
+
+    CheckpointReading:
+      type: object
+      required:
+        - checkpoint_id
+        - total_readings
+      properties:
+        checkpoint_id:
+          type: string
+          description: Identifier for the checkpoint
+          example: CHECK_01
+        total_readings:
+          type: integer
+          description: Total number of readings at this checkpoint
+          example: 5
+
+    CampaignAd:
+      type: object
+      required:
+        - campaign_id
+        - total_ads_shown
+      properties:
+        campaign_id:
+          type: string
+          description: Identifier for the campaign
+          example: CAMP_001
+        total_ads_shown:
+          type: integer
+          description: Total number of ads shown for this campaign
+          example: 7
+
+    Exposure:
+      type: object
+      required:
+        - exposure_id
+        - campaign_id
+        - ad_content
+        - timestamp
+        - reading_id
+        - license_plate
+        - checkpoint_id
+      properties:
+        exposure_id:
+          type: integer
+          description: Unique identifier for the exposure
+          example: 7
+        campaign_id:
+          type: string
+          description: Identifier for the campaign
+          example: CAMP_001
+        ad_content:
+          type: string
+          description: Identifier for the ad content
+          example: AD_001
+        timestamp:
+          type: string
+          format: date-time
+          description: Time when the ad was shown
+          example: 2023-06-10T14:30:00Z
+        reading_id:
+          type: string
+          description: Identifier for the reading
+          example: READ123
+        license_plate:
+          type: string
+          description: License plate number
+          example: ABC123
+        checkpoint_id:
+          type: string
+          description: Identifier for the checkpoint
+          example: CHECK_01
+
+    Metrics:
+      type: object
+      required:
+        - readings_by_checkpoint
+        - ads_by_campaign
+        - recent_exposures
+        - metadata
+      properties:
+        readings_by_checkpoint:
+          type: array
+          description: Total readings per checkpoint
+          items:
+            $ref: "#/components/schemas/CheckpointReading"
+        ads_by_campaign:
+          type: array
+          description: Total ads shown per campaign
+          items:
+            $ref: "#/components/schemas/CampaignAd"
+        recent_exposures:
+          type: array
+          description: List of recent ad exposures
+          items:
+            $ref: "#/components/schemas/Exposure"
+        metadata:
+          type: object
+          required:
+            - limit_applied
+          properties:
+            limit_applied:
+              type: integer
+              description: Limit applied to recent exposures
+              example: 5
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Invalid timestamp: must be in ISO 8601 format"

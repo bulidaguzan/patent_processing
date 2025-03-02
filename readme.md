@@ -14,6 +14,7 @@ This system is designed to capture license plate readings from various checkpoin
 - Query metrics about readings and ad campaigns
 - Fully containerized development environment
 - Comprehensive test suite
+- Interactive Swagger UI for API testing and documentation ([View API Documentation](./swagger-ui.html))
 
 ## Architecture
 
@@ -66,14 +67,31 @@ Wait until you see `Apply complete!` in the logs.
 
 ## Testing the APIs
 
-### 1. Get the API ID
+You can test the APIs using either the Swagger UI or direct curl commands.
+
+### Option 1: Using Swagger UI
+
+1. Get your API ID by running the provided script:
+   ```bash
+   ./get-api-id.sh
+   ```
+
+2. Open the Swagger UI in your browser by clicking on [API Documentation](./swagger-ui.html)
+
+3. Enter the API ID in the field at the top of the page and click "Update Swagger"
+
+4. Use the interactive documentation to test the endpoints
+
+### Option 2: Using curl commands
+
+#### 1. Get the API ID
 
 ```bash
 API_ID=$(docker exec localstack aws --endpoint-url=http://localhost:4566 apigateway get-rest-apis | grep "id" | head -1 | sed 's/.*"id": "\([^"]*\)".*/\1/')
 echo $API_ID
 ```
 
-### 2. Process License Plate Reading
+#### 2. Process License Plate Reading
 
 ```bash
 curl -X POST \
@@ -81,7 +99,7 @@ curl -X POST \
   -H 'Content-Type: application/json' \
   -d '{
     "reading_id": "READ123",
-    "timestamp": "2023-06-10T14:30:00Z",
+    "timestamp": "2023-06-10T14:30:00.000+00:00",
     "license_plate": "ABC123",
     "checkpoint_id": "CHECK_01",
     "location": {
@@ -90,6 +108,8 @@ curl -X POST \
     }
 }'
 ```
+
+> **Note**: The timestamp must be in ISO 8601 format. Using `2023-06-10T14:30:00.000+00:00` format ensures compatibility with the parser.
 
 Expected response:
 ```json
@@ -103,7 +123,7 @@ Expected response:
 }
 ```
 
-### 3. Query Metrics
+#### 3. Query Metrics
 
 ```bash
 curl -X GET \
@@ -302,6 +322,29 @@ docker-compose down -v
 
 This will also remove the volumes, including the PostgreSQL data.
 
+## Swagger API Documentation
+
+The project includes a comprehensive Swagger (OpenAPI) documentation to help you interact with the API:
+
+- **Swagger UI**: A browser-based UI for testing the API and reading documentation
+- **OpenAPI Specification**: A formal description of the API endpoints, parameters, and schemas
+- **Helper Script**: A utility to easily retrieve your API ID from LocalStack
+
+### Swagger Features
+
+- Complete API documentation with detailed schemas
+- Interactive "Try it out" functionality to test endpoints
+- Request and response examples
+- Easy parameter input with validation
+- Error response documentation
+
+### Setting Up Swagger
+
+1. Start the environment with `docker-compose up -d`
+2. Run the API ID helper script: `./get-api-id.sh`
+3. Open the Swagger UI in your browser: [API Documentation](./swagger-ui.html)
+4. Enter your API ID and click "Update Swagger"
+
 ## Future Improvements
 
 - Move campaign rules to the database
@@ -312,3 +355,4 @@ This will also remove the volumes, including the PostgreSQL data.
 - Implement automated CI/CD pipeline
 - Add performance optimization for high-traffic scenarios
 - Implement a notification system for campaign managers
+- Expand Swagger documentation with more examples and use cases
