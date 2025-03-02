@@ -9,10 +9,11 @@ This system is designed to capture license plate readings from various checkpoin
 ### Key Features
 
 - Process license plate readings in real-time
-- Apply campaign rules based on location, time, and exposure limits
+- Apply campaign rules based on location, time window, and exposure limits
 - Store readings and ad exposures in PostgreSQL
 - Query metrics about readings and ad campaigns
 - Fully containerized development environment
+- Comprehensive test suite
 
 ## Architecture
 
@@ -24,6 +25,7 @@ The application consists of:
 - API Gateway endpoints for the Lambda functions
 - PostgreSQL database for storing readings and ad exposures
 - Infrastructure as Code using Terraform
+- Docker-based local development environment
 
 ## Prerequisites
 
@@ -47,8 +49,9 @@ docker-compose up -d
 
 This command will:
 - Start LocalStack (AWS services emulator)
-- Start PostgreSQL database
+- Start PostgreSQL database and pgAdmin
 - Initialize the database tables
+- Build Lambda deployment packages
 - Deploy Terraform infrastructure
 
 ### 3. Wait for Initialization
@@ -88,7 +91,7 @@ curl -X POST \
 }'
 ```
 
-Response:
+Expected response:
 ```json
 {
     "reading_id": "READ123",
@@ -107,7 +110,7 @@ curl -X GET \
   "http://localhost:4566/restapis/$API_ID/dev/_user_request_/metrics?limit=5"
 ```
 
-Response:
+Expected response:
 ```json
 {
     "readings_by_checkpoint": [
@@ -136,13 +139,55 @@ Response:
             "license_plate": "ABC123",
             "checkpoint_id": "CHECK_01"
         }
-    ]
+    ],
+    "metadata": {
+        "limit_applied": 5
+    }
 }
 ```
 
-## Database Queries
+## Running Tests
 
-You can verify the data in the database with these commands:
+The project includes both unit tests and end-to-end tests:
+
+### Unit Tests
+
+To run unit tests for the Lambda functions:
+
+```bash
+# For process_readings Lambda
+docker exec lambda-deps cd /lambda/process_readings && python -m unittest test.py
+
+# For query_metrics Lambda
+docker exec lambda-deps cd /lambda/query_metrics && python -m unittest test.py
+```
+
+### End-to-End Tests
+
+To run the end-to-end test suite that validates the entire system:
+
+```bash
+./e2e-tests.sh
+```
+
+This will run a series of test cases that verify different aspects of the system's functionality.
+
+## Database Access
+
+You can use pgAdmin to inspect the database:
+
+1. Open your browser and navigate to `http://localhost:5050`
+2. Login with:
+   - Email: admin@admin.com
+   - Password: admin
+3. Add a new server with:
+   - Host: postgres
+   - Port: 5432
+   - Database: licenseplate_db
+   - Username: postgres
+   - Password: postgres
+
+Alternatively, you can query the database directly with these commands:
 
 ```bash
 # Check readings
@@ -192,31 +237,39 @@ The system comes with two predefined campaigns:
 
 ### Implementation Details
 
-1. **Processing Logic**:
+1. **Processing Lambda Logic**:
    - License plate readings are validated and stored
    - Campaign rules (location, time window, exposure limits) are applied
    - If applicable, an ad exposure is recorded
+   - Returns processing result with ad information if served
 
-2. **Metrics Logic**:
+2. **Metrics Lambda Logic**:
    - Counts readings by checkpoint
    - Calculates total ads shown by campaign
    - Retrieves recent exposures with details
+   - Supports query parameters for customization
 
-## Common Issues & Troubleshooting
+3. **Error Handling**:
+   - Input validation with detailed error messages
+   - Database connection management
+   - Proper HTTP status codes for different error scenarios
+   - Comprehensive logging
 
-### AWS Credentials for LocalStack
+## Troubleshooting
 
-LocalStack requires AWS credentials even though it's a local emulation. Set them with:
+### API Connection Issues
+
+If you can't connect to the API endpoints, verify that LocalStack and Terraform have finished initializing:
 
 ```bash
-docker exec localstack aws configure set aws_access_key_id test
-docker exec localstack aws configure set aws_secret_access_key test
-docker exec localstack aws configure set region us-east-1
+# Check if API Gateway is properly deployed
+docker exec localstack aws --endpoint-url=http://localhost:4566 apigateway get-rest-apis
+
+# Check Lambda functions
+docker exec localstack aws --endpoint-url=http://localhost:4566 lambda list-functions
 ```
 
-For convenience, these credentials are already configured in the docker-compose.yml file.
-
-### Connection Issues Between Containers
+### Database Connection Issues
 
 If Lambda functions can't connect to the database, verify connectivity:
 
@@ -224,22 +277,19 @@ If Lambda functions can't connect to the database, verify connectivity:
 docker exec localstack ping -c 3 postgres
 ```
 
-### Lambda Packaging Issues
+### Lambda Execution Issues
 
-If you encounter module import errors with `psycopg2`, make sure the Lambda deployment packages are created correctly with all native dependencies:
-
-```bash
-# Use the proper pip install command for Lambda
-pip install --platform manylinux2014_x86_64 --implementation cp --python 3.9 --only-binary=:all: --upgrade -r requirements.txt -t .
-```
-
-### Terraform Not Running
-
-If Terraform container exits prematurely:
+Check the CloudWatch logs for any Lambda errors:
 
 ```bash
-# Manually run Terraform
-docker exec -it terraform terraform apply -auto-approve
+docker exec localstack aws --endpoint-url=http://localhost:4566 logs describe-log-groups
+
+# Get the latest log stream for a function
+LOG_GROUP="/aws/lambda/process-license-plate-readings"
+LOG_STREAM=$(docker exec localstack aws --endpoint-url=http://localhost:4566 logs describe-log-streams --log-group-name "$LOG_GROUP" --order-by LastEventTime --descending --limit 1 | grep logStreamName | cut -d'"' -f4)
+
+# View the logs
+docker exec localstack aws --endpoint-url=http://localhost:4566 logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM"
 ```
 
 ## Clean Up
@@ -256,7 +306,9 @@ This will also remove the volumes, including the PostgreSQL data.
 
 - Move campaign rules to the database
 - Add authentication/authorization
-- Implement more sophisticated campaign rules
+- Implement more sophisticated campaign rules based on vehicle type, time of day, etc.
 - Create a UI for monitoring and management
 - Add additional metrics and reporting features
-- Implement automated testing
+- Implement automated CI/CD pipeline
+- Add performance optimization for high-traffic scenarios
+- Implement a notification system for campaign managers
