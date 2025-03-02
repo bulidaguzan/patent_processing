@@ -83,6 +83,9 @@ services:
         cd /packages/query_metrics &&
         pip install -r /lambda/query_metrics/requirements.txt -t . &&
         
+        # Eliminamos archivos ZIP existentes para evitar problemas con actualizaciones
+        rm -f /packages/process_readings.zip /packages/query_metrics.zip &&
+        
         # Creamos los archivos ZIP para las funciones Lambda
         cd /packages/process_readings && zip -r /packages/process_readings.zip . &&
         cd /packages/query_metrics && zip -r /packages/query_metrics.zip ."
