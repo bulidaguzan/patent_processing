@@ -56,18 +56,25 @@ This command will:
 The system takes about 30-45 seconds to fully initialize. You can check if the setup is complete by monitoring the logs:
 
 ```bash
-docker-compose logs -f terraform
+docker logs terraform
 ```
 
 Wait until you see `Apply complete!` in the logs.
 
 ## Testing the APIs
 
-### Process License Plate Reading
+### 1. Get the API ID
+
+```bash
+API_ID=$(docker exec localstack aws --endpoint-url=http://localhost:4566 apigateway get-rest-apis | grep "id" | head -1 | sed 's/.*"id": "\([^"]*\)".*/\1/')
+echo $API_ID
+```
+
+### 2. Process License Plate Reading
 
 ```bash
 curl -X POST \
-  http://localhost:4566/restapis/<api-id>/dev/_user_request_/readings \
+  http://localhost:4566/restapis/$API_ID/dev/_user_request_/readings \
   -H 'Content-Type: application/json' \
   -d '{
     "reading_id": "READ123",
@@ -93,11 +100,11 @@ Response:
 }
 ```
 
-### Query Metrics
+### 3. Query Metrics
 
 ```bash
 curl -X GET \
-  "http://localhost:4566/restapis/<api-id>/dev/_user_request_/metrics?limit=5"
+  "http://localhost:4566/restapis/$API_ID/dev/_user_request_/metrics?limit=5"
 ```
 
 Response:
@@ -133,15 +140,17 @@ Response:
 }
 ```
 
-## Getting API IDs
+## Database Queries
 
-After deployment, you can find the API ID by running:
+You can verify the data in the database with these commands:
 
 ```bash
-docker exec terraform aws --endpoint-url=http://localstack:4566 apigateway get-rest-apis
-```
+# Check readings
+docker exec -it postgres psql -U postgres -d licenseplate_db -c "SELECT * FROM license_plate_readings"
 
-Use the `id` field from the output in your API requests.
+# Check exposures
+docker exec -it postgres psql -U postgres -d licenseplate_db -c "SELECT * FROM ad_exposures"
+```
 
 ## Campaign Rules
 
@@ -159,12 +168,11 @@ The system comes with two predefined campaigns:
    - Max exposures per plate: 5
    - Ad content: AD_002
 
-## Database Schema
+## Technical Details
 
-### License Plate Readings Table
+### Database Schema
 
-Stores all incoming license plate readings.
-
+**License Plate Readings Table**
 - `id`: Serial primary key
 - `reading_id`: Unique identifier for the reading
 - `timestamp`: When the reading occurred
@@ -174,10 +182,7 @@ Stores all incoming license plate readings.
 - `longitude`: Geographic longitude
 - `created_at`: When the record was created
 
-### Ad Exposures Table
-
-Tracks which ads were shown for which readings.
-
+**Ad Exposures Table**
 - `id`: Serial primary key
 - `reading_id`: Reference to the license plate reading
 - `campaign_id`: ID of the campaign
@@ -185,72 +190,56 @@ Tracks which ads were shown for which readings.
 - `exposure_timestamp`: When the ad was shown
 - `created_at`: When the record was created
 
-## Implementation Details
+### Implementation Details
 
-### Processing Logic
+1. **Processing Logic**:
+   - License plate readings are validated and stored
+   - Campaign rules (location, time window, exposure limits) are applied
+   - If applicable, an ad exposure is recorded
 
-1. When a reading is received, it's validated and stored
-2. The system determines which campaign applies based on:
-   - Whether the checkpoint is included in the campaign's locations
-   - Whether the current time is within the campaign's time window
-   - Whether the license plate has been exposed to the campaign less than the maximum allowed times
-3. If a campaign applies, an ad exposure is recorded
+2. **Metrics Logic**:
+   - Counts readings by checkpoint
+   - Calculates total ads shown by campaign
+   - Retrieves recent exposures with details
 
-### Metrics Calculation
+## Common Issues & Troubleshooting
 
-The metrics endpoint provides:
-- Total readings per checkpoint
-- Total ads shown per campaign
-- List of recent ad exposures with details
+### AWS Credentials for LocalStack
 
-## Design Considerations
-
-- **Simplicity**: The system uses a straightforward schema and processing logic
-- **Extensibility**: Additional campaign rules could be easily added
-- **Local Development**: Full AWS emulation using LocalStack for easy testing
-- **Infrastructure as Code**: Terraform ensures repeatable deployments
-
-## Limitations and Future Improvements
-
-- Campaign rules are currently hardcoded; they could be moved to a database table
-- There's no authentication or authorization
-- Error handling could be enhanced for production use
-- Performance optimizations could be added for high-volume scenarios
-- Additional campaign rule types could be implemented (day of week, weather, etc.)
-
-## Troubleshooting
-
-### API Gateway Issues
-
-If you're having trouble with the API endpoints, try:
+LocalStack requires AWS credentials even though it's a local emulation. Set them with:
 
 ```bash
-docker exec terraform aws --endpoint-url=http://localstack:4566 apigateway get-stages --rest-api-id <api-id>
+docker exec localstack aws configure set aws_access_key_id test
+docker exec localstack aws configure set aws_secret_access_key test
+docker exec localstack aws configure set region us-east-1
 ```
 
-### Database Issues
+For convenience, these credentials are already configured in the docker-compose.yml file.
 
-To connect directly to the database for troubleshooting:
+### Connection Issues Between Containers
+
+If Lambda functions can't connect to the database, verify connectivity:
 
 ```bash
-docker exec -it postgres psql -U postgres -d licenseplate_db
+docker exec localstack ping -c 3 postgres
 ```
 
-Common SQL queries for debugging:
-```sql
--- Check readings
-SELECT * FROM license_plate_readings ORDER BY timestamp DESC LIMIT 5;
+### Lambda Packaging Issues
 
--- Check exposures
-SELECT * FROM ad_exposures ORDER BY exposure_timestamp DESC LIMIT 5;
-```
-
-### Lambda Issues
-
-To check Lambda logs:
+If you encounter module import errors with `psycopg2`, make sure the Lambda deployment packages are created correctly with all native dependencies:
 
 ```bash
-docker exec terraform aws --endpoint-url=http://localstack:4566 logs describe-log-streams --log-group-name "/aws/lambda/process-license-plate-readings"
+# Use the proper pip install command for Lambda
+pip install --platform manylinux2014_x86_64 --implementation cp --python 3.9 --only-binary=:all: --upgrade -r requirements.txt -t .
+```
+
+### Terraform Not Running
+
+If Terraform container exits prematurely:
+
+```bash
+# Manually run Terraform
+docker exec -it terraform terraform apply -auto-approve
 ```
 
 ## Clean Up
@@ -263,7 +252,11 @@ docker-compose down -v
 
 This will also remove the volumes, including the PostgreSQL data.
 
+## Future Improvements
 
-
-
-
+- Move campaign rules to the database
+- Add authentication/authorization
+- Implement more sophisticated campaign rules
+- Create a UI for monitoring and management
+- Add additional metrics and reporting features
+- Implement automated testing
