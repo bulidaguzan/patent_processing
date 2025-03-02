@@ -13,12 +13,17 @@ services:
       - DEFAULT_REGION=us-east-1
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
       - LAMBDA_EXECUTOR=local
       - LAMBDA_REMOTE_DOCKER=false
       - HOSTNAME_EXTERNAL=localstack
       - SKIP_DIRECTORY_CLEANUP=1
       - GATEWAY_LISTEN=0.0.0.0:4566
       - GATEWAY_FORWARD=
+
+
+      
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "./lambda:/opt/lambda"
@@ -77,11 +82,11 @@ services:
         
         # Instalamos las dependencias para process_readings
         cd /packages/process_readings &&
-        pip install -r /lambda/process_readings/requirements.txt -t . &&
+        pip install --platform manylinux2014_x86_64 --implementation cp --python 3.9 --only-binary=:all: --upgrade -r /lambda/process_readings/requirements.txt -t . &&
         
         # Instalamos las dependencias para query_metrics
         cd /packages/query_metrics &&
-        pip install -r /lambda/query_metrics/requirements.txt -t . &&
+        pip install --platform manylinux2014_x86_64 --implementation cp --python 3.9 --only-binary=:all: --upgrade -r /lambda/query_metrics/requirements.txt -t . &&
         
         # Eliminamos archivos ZIP existentes para evitar problemas con actualizaciones
         rm -f /packages/process_readings.zip /packages/query_metrics.zip &&
@@ -89,7 +94,7 @@ services:
         # Creamos los archivos ZIP para las funciones Lambda
         cd /packages/process_readings && zip -r /packages/process_readings.zip . &&
         cd /packages/query_metrics && zip -r /packages/query_metrics.zip ."
-
+        
   terraform:
     container_name: terraform
     image: hashicorp/terraform:latest
