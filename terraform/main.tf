@@ -195,6 +195,11 @@ resource "aws_lambda_permission" "apigw_query_metrics" {
   source_arn    = "${aws_api_gateway_rest_api.license_plate_api.execution_arn}/*/*"
 }
 
+output "api_gateway_url" {
+  value = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_"
+}
+
+
 output "api_url" {
   description = "Base URL for API Gateway"
   value       = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.license_plate_api.id}/dev/_user_request_"
