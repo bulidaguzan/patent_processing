@@ -115,6 +115,7 @@ services:
     networks:
       - local-aws-network
     entrypoint: ["sh", "-c", "sleep 10 && terraform init && terraform apply -auto-approve"]
+  
 
 networks:
   local-aws-network:
